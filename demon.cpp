@@ -1,8 +1,8 @@
 #include <iostream>
-#include <sys/syscall.h> // linux api basically
-#include <sys/inotify.h>
 #include <string.h>
 #include <signal.h>
+#include <sys/inotify.h>
+#include <sys/syscall.h> // linux api basically
 #include <libnotify/notify.h>
 
 // just some error codes..
@@ -12,9 +12,23 @@
 #define EXT_ERR_ADD_WATCH 3
 #define EXT_ERR_BASE_PATH_NULL 4
 #define EXT_ERR_READ_INOTIFY 5
+#define EXT_ERR_INIT_LIBNOTIFY 6
 
 int IeventQueue = -1;
 int IeventStatus = -1;
+int closeStatus = -1;
+
+char *ProgramTitle = "Demon";
+
+void signal_handler(int signal) {
+  std::cout << "Signal Received, Cleaning Up..\n";
+  closeStatus = inotify_rm_watch(IeventQueue, IeventStatus);
+  if (closeStatus == -1) {
+    std::cerr << "Error Removing From Watch Queue.\n";
+  }
+  close(IeventQueue);
+  exit(EXT_SUCCESS);
+}
 
 // to accept arguments thru terminal wer define these two variables.
 int main(int argc, char* argv[]) {
@@ -25,8 +39,7 @@ int main(int argc, char* argv[]) {
   char *token = NULL;
   char *notificationMessage = NULL;
 
-  // need to add glib.
-  NotifiyNotification *notifyHandle;
+  NotifyNotification *notifyHandle;
 
   char buffer[4096];
   int readLength;
@@ -58,6 +71,12 @@ int main(int argc, char* argv[]) {
     exit(EXT_ERR_BASE_PATH_NULL);
   }
 
+  libnotifyInitStatus = notify_init(ProgramTitle);
+  if (!libnotifyInitStatus) {
+    std::cerr << "Error Initialising libnotify.\n";
+    exit(EXT_ERR_INIT_LIBNOTIFY);
+  }
+
   IeventQueue = inotify_init();
   if (IeventQueue == -1) {
     std::cerr << "Error Initialising inotify Instance.\n";
@@ -70,8 +89,12 @@ int main(int argc, char* argv[]) {
     exit(EXT_ERR_ADD_WATCH);
   }
 
+  signal(SIGABRT, signal_handler);
+  signal(SIGINT, signal_handler);
+  signal(SIGTERM, signal_handler);
+
   while(true) {
-    std::cout << "Waiting For Ievent";
+    std::cout << "Waiting For Ievent..\n";
     readLength = read(IeventQueue, buffer, sizeof(buffer));
     if (readLength == -1) {
       std::cerr << "Error Reading From Inotify Instance.";
@@ -107,11 +130,17 @@ int main(int argc, char* argv[]) {
             notificationMessage = "File Moved.\n";
           }
 
-          if (notificationMessage == NULL) {
+          if (notificationMessage == NULL) { 
             continue;
           }
 
-          std::cout << notificationMessage << "\n";
+          notifyHandle = notify_notification_new(basePath, notificationMessage, "dialog-information");
+          if (notifyHandle == NULL) {
+            std::cerr << "Notification Handle was Null.\n";
+            continue;
+          }
+
+          notify_notification_show(notifyHandle, NULL);
     }
   }
 }
